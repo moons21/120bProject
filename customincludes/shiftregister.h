@@ -3,12 +3,23 @@
 
 
 
-// ----------------------------------	Shift register function	 ----------------------------------
-// First Parameter: Make sure to pass in ADDRESS of the port you desire to update
-// Second paramter: Address of the shift register clock, incase its different
-// This allows for maximum flexibility, in case there are multiple shift registers that need to be modified
+// Important note: This function does NOT implement the output enable pin of the shift register
 
-// Last four parameters are the pins the shift register is connected to
+// To see value on shift register: set OE pin to low. Otherwise, set it to high.
+
+/*
+	This function outputs data onto an 8 bit shift register
+	Parameter meanings:
+		port - the port the shift register is connected to
+		srclock - the port the srclock is connected to
+		data - the value that is being pushed onto the registers
+		
+		other parameters are pins to something:
+		DATA_SR - Pin on the microcontroller associated with shift register data pin
+		LATCH - Pin on the microcontroller associated with shift register LATCH pin
+		SRCLK - Pin on the microcontroller associated with shift register SRCLK
+		CLEAR - Pin on the microcontroller associated with shift register CLEAR pin
+*/
 void transmit_data(volatile uint8_t *port,volatile uint8_t *srclock, unsigned char data, 
 unsigned char DATA_SR, unsigned char LATCH, unsigned char SRCLK, unsigned char CLEAR) {
 	unsigned char i;
