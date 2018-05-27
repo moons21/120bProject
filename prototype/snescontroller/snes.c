@@ -1,15 +1,12 @@
-/*
-	SNES CONTROLLER IMPLEMENTATION
-	Controller uses a shift register for button inputs
-	Bits: B, Y, Select, Start, Up, Down, Left, Right, A, X, L, R, 
-		  0, 1,      2,  3,     4,  5,   6,      7,   9, 10,11,12
-*/
+
 
 #include <avr/io.h>
 #include "timer.h"
 #include "bit.h"
 #include "shiftregister.h"
+#include "snes.h"
 
+// -----------------------------	Controller Defines	-----------------------------	
 // Controller Ports
 #define PORTSNES PORTA
 #define PINSNES PINA
@@ -17,72 +14,44 @@
 #define CLOCK_SNES 0
 #define LATCH_SNES 1
 #define DATA_SNES 2
-
-// SNES controller data
-unsigned short controllerData = 0; // 16 bits
-
-void readSNES();	// Function prototype
-unsigned short _SetBit(unsigned short pin, unsigned short number, unsigned short bin_value);
-void daisy(unsigned short data);
-
-// Defines Shift register 0
+// -----------------------------	Defines Shift register 0	-----------------------------	
 #define PORTSR PORTC
 #define SRCLOCK PORTC
-
 #define CLEAR 3	// LOW = clears the register. HIGH = keeps values
 #define DATA_SR 0
 #define LATCH 2
 #define SRCLK 4
 #define OE_SR 1
 
+// -----------------------------	Prototypes	-----------------------------	
+
+unsigned short _readSNES();	// Helper function for snes controller header
+void daisy(unsigned short data);	// controller output via register daisy chain
+
 int main(void)
 {
 	DDRA = 0x03;	PORTA = 0x04;	// clock&latch is output, but the data pin is input
 	DDRC = 0xFF;	PORTC = 0x00;	// port b is output (LED's for testing)
 	
-	// Controller set bits
+	// Controller set bits	(MAKE SURE TO INCLUDE IN PROJECT!!!!!!!)
 	PORTSNES = SetBit(PINSNES, LATCH_SNES, 0);	// Set latch low
 	PORTSNES = SetBit(PINSNES, CLOCK_SNES, 0);	// Set pin low
 	
 	// Timer
 	TimerSet(50);	// 50 ms for controller input
 	TimerOn();
-	unsigned short i = 0;
 	
-	unsigned short oldData = 0;
     while (1) 
     {
-		oldData = controllerData;
-		readSNES();
-		
-		
 		while(!TimerFlag);
 		TimerFlag = 0;
-		daisy(controllerData);
-		
+		daisy(_readSNES());
     }
 }
 
-void readSNES(){
-	unsigned char i = 0;	// Loop variable
-	
-	controllerData = 0x00;
-	// Latch new data
-	PORTSNES |= 0x02;	// Latch
-	PORTSNES = 0x00;
-	
-	// Read the buttons
-	for(i = 0; i < 16; i += 1){
-		PORTSNES = 0x00;	// unset clock
-		controllerData |= (~PINSNES & (0x01 << DATA_SNES))? 0x01 << i : 0x00 << i;
-		PORTSNES = 1 << CLOCK_SNES;	// set clock to read bit
-	}
-}
-
-// Modified setbit function
-unsigned short _SetBit(unsigned short pin, unsigned short number, unsigned short bin_value)
-{
-	return (bin_value ? pin | (0x01 << number) : pin & ~(0x01 << number));
+unsigned short _readSNES(){
+	return readSNES(&PORTSNES,&PINSNES,
+	CLOCK_SNES, LATCH_SNES, DATA_SNES);
 }
 
 void daisy(unsigned short data){
