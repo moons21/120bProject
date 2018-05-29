@@ -23,7 +23,6 @@
 void transmit_data(volatile uint8_t *port,unsigned char data, 
 unsigned char DATA_SR, unsigned char LATCH, unsigned char SRCLK, unsigned char CLEAR) {
 	unsigned char i;
-	unsigned char delete = (0x01 << DATA_SR) + (0x01 << LATCH) + (0x01 << SRCLK) + (0x01 << CLEAR);
 	for (i = 0; i < 8 ; ++i) {
 		// Sets SRCLR to 1 allowing data to be set
 		// Also clears SRCLK in preparation of sending data
