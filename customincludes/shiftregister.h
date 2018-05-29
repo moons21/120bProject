@@ -41,7 +41,7 @@ unsigned char DATA_SR, unsigned char LATCH, unsigned char SRCLK, unsigned char C
 }
 
 // Last four parameters are the pins the shift register is connected to
-void transmit_short(volatile uint8_t *port,volatile uint8_t *srclock, unsigned short data, 
+void transmit_short(volatile uint8_t *port, unsigned short data, 
 unsigned char DATA_SR, unsigned char LATCH, unsigned char SRCLK, unsigned char CLEAR) {
 	unsigned char i;
 	for (i = 0; i < 16 ; ++i) {
@@ -55,7 +55,7 @@ unsigned char DATA_SR, unsigned char LATCH, unsigned char SRCLK, unsigned char C
 		*port |= 0x01 << SRCLK;
 	}
 	// set RCLK = 1. Rising edge copies data from “Shift” register to “Storage” register
-	*srclock |= 0x01 << LATCH;
+	*port |= 0x01 << LATCH;
 	// clears all lines in preparation of a new transmission
 	*port = 0x00;
 }
