@@ -10,6 +10,7 @@
 #include "timer.h"
 #include "shiftregister.h"
 #include "snes.h"
+#include "io.c"
 
 // -----------------------------	Defines Shift register 0	-----------------------------
 #define PORTSR PORTC
@@ -49,6 +50,7 @@
 unsigned short _readSNES();	// Helper function for snes controller header
 void daisy(unsigned short data);	// controller output via register daisy chain
 unsigned long int findGCD(unsigned long int a, unsigned long int b);
+void displayHighscore(unsigned long score, unsigned char column, unsigned char length);
 
 // -----------------------------	Shared Variables	-----------------------------
 unsigned short controllerData = 0x00;	// from snes
@@ -134,16 +136,19 @@ int ledsrTick(int state){
 		case lsr_savehold:break;
 		default: break;
 	}
+	displayHighscore(lsrOutput, 1, 5);
 	 daisy(lsrOutput);
 	return state;
 }
 
 int main(void)
 {
-	DDRA = 0x06;	PORTA = 0x01;	// clock&latch is output, but the data pin is input
+	DDRA = 0xfe;	PORTA = 0x01;	// clock&latch is output, but the data pin is input
     DDRC = 0xff; PORTC = 0x00;	// Port c is the output register
-	DDRD = 0x00; PORTD = 0xff;
+	DDRD = 0xff; PORTD = 0xff;
 	
+	//LCD Stuff
+	LCD_init();
 	
 	
 	// Period for the tasks
@@ -224,3 +229,29 @@ unsigned long int findGCD(unsigned long int a, unsigned long int b)
 	return 0;
 }
 //--------End find GCD function ----------------------------------------------
+
+//--------HighScore function --------------------------------------------------
+void displayHighscore(unsigned long score, unsigned char column, unsigned char length)	// Length is how many rows past the initial column to write the data
+{
+	 unsigned char c = column;
+	 unsigned char sigfig = 0;	
+	 unsigned char display[10];		// max value of long can be 10 digits long
+	 
+	 length = (length > 10)? 10 : length;	// sets limit to how long the length can be
+	 
+	 for (signed char i = 0; i < 10; i += 1){	// Initialize values
+		 display[i] = 0;
+	 }
+	 
+	 while(score){	// puts the score data into the array
+		 display[sigfig] = score % 10;
+		 score /= 10;
+		 sigfig += 1;
+	 }
+  	 for (signed char i = length - 1; i >= 0; i-=1){
+ 		   LCD_Cursor(c);
+		   LCD_WriteData(display[i] + 48);
+ 		   c += 1;
+  	 }
+}
+//--------End function ----------------------------------------------
