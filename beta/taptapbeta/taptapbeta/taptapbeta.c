@@ -5,6 +5,7 @@
 
 // -----------------------------	Includes	-----------------------------
 #include <avr/io.h>
+#include <avr/eeprom.h>		// Allows writing to controller EEPROM
 #include "shiftregister.h"
 #include "timer.h"
 #include "io.c"
@@ -73,13 +74,18 @@ unsigned short getSNESdata();
 
 //	-----------------------------	Shared Variables	-----------------------------
 unsigned char LCDnoteArea[] = {0,0,0,0,0,0,0,0};	// Each represents a row
-	unsigned char pausePic[] = {0x3c,0x42,0xa5,0x81,0xa5,0x99,0x42,0xff};	// Each represents a row
+unsigned char pausePic[] = {0x3c,0x42,0xa5,0x81,0xa5,0x99,0x42,0xff};	// Each represents a row
+unsigned char sadFace[] = {0x3c,0x42,0xa5,0x81,0x99,0xa5,0x42,0xff};	// Each represents a row
 unsigned short controllerData = 0;	
+
 unsigned char incomingNotes = 0;	// replaces the top row of the note area
+unsigned char newNote = 0xc0;
+
 unsigned short missCount = 0;
 unsigned short hitCount = 0;
-unsigned short isPlaying = 0;
-unsigned short endGame = 0;
+unsigned char isPlaying = 0;
+unsigned char endGame = 0;
+unsigned char resetGame = 0;
 unsigned char customChar_musicNote[8] = {
 	0b00001,
 	0b00011,
@@ -91,12 +97,18 @@ unsigned char customChar_musicNote[8] = {
 	0b11000
 };
 
-unsigned short currentScore = 0;
+unsigned long currentScore = 0;
+
+unsigned long leftnote = 0b10000111011000100000100100000011;
+unsigned long middlenote = 0b10100010000010001001001001000100;
+unsigned long rightnote = 0b10011000011100100100010000100000;
+unsigned long l, m, r;
+
 	
 //	----------------------------------------------------------	Start FSM definitions	----------------------------------------------------------
 
 //---------------------- LED matrix display FSM----------------------
-enum ledmStates{ledm_start, ledm_display, ledm_notplaying};
+enum ledmStates{ledm_start, ledm_display, ledm_notplaying, ledm_endgame};
 	
 int ledmTick(int state){
 	// State transitions
@@ -105,10 +117,13 @@ int ledmTick(int state){
 			state = ledm_display;
 			break;
 		case ledm_display:
-			state = (isPlaying)? ledm_display : ledm_notplaying;
+			state = (isPlaying)? ledm_display : (endGame)? ledm_endgame : ledm_notplaying ;
 			break;
 		case ledm_notplaying:
-			state = (isPlaying)? ledm_display : ledm_notplaying;
+			state = (isPlaying)? ledm_display : (endGame)? ledm_endgame : ledm_notplaying ;
+			break;
+		case ledm_endgame:
+			state = (isPlaying)? ledm_display : (endGame)? ledm_endgame : ledm_notplaying ;
 			break;
 		default: state = ledm_start; break;
 	}
@@ -120,6 +135,9 @@ int ledmTick(int state){
 			break;
 		case ledm_notplaying:
 			setPicture(pausePic);
+			break;
+		case ledm_endgame:
+			setPicture(sadFace);
 			break;
 		default: break;
 	}
@@ -143,11 +161,6 @@ int snesReadTick(int state){
 	switch(state){
 		case readControllerData:
 			controllerData = getSNESdata();
-			// FIXME THIS IS SUPER TEMPORARY!!!!!!!!!
-			incomingNotes = 0;
-			incomingNotes |=  (controllerData & SNES_Left)? 0xc0 : 0;
-			incomingNotes |= (controllerData & SNES_Down)? 0x18 : 0;
-			incomingNotes |= (controllerData & SNES_Right)? 0x3 : 0;
 			break;
 		default: break;
 	}
@@ -155,32 +168,65 @@ int snesReadTick(int state){
 }
 //---------------------- Falling Note FSM----------------------
 // Period should be 1/8 of the music bpm
-enum fallingStates{fs_wait, fs_falling};
-	
+enum fallingStates{fs_start, fs_init, fs_wait, fs_falling};
+
 int fallingTick(int state){
 	unsigned char i;
+	static unsigned char timing = 0;
+	
+	if (resetGame || endGame){
+// 		l = leftnote;
+// 		r = rightnote;
+// 		m = middlenote;
+		return fs_start;
+	}
 	if (!isPlaying){
 		return state;	// game isnt started, just return
 	}
 	// State transitions
 	switch(state){
-		case fs_wait:
-			state =  fs_falling;
+		case fs_start:
+			state = fs_init;
+			break;
+		case fs_init:
+			state = fs_falling;
 			break;
 		case fs_falling:
 			state = fs_falling;
 			break;
 		default:
-			state = fs_wait;
+			state = fs_start;
 			break;
 	}
 	// State actions
 	switch(state){
+		case fs_start:
+			timing = 0;
+			l = leftnote;
+			r = rightnote;
+			m = middlenote;
+			break;
+		case fs_init:
+			timing = 0;
+			l = leftnote;
+			r = rightnote;
+			m = middlenote;
+			break;
 		case fs_falling:	// Objective is to move all the rows down, add the new row at the top
 			for(i = 7; i > 0; i -= 1){
 				LCDnoteArea[i] = LCDnoteArea[i-1];
 			}
-			LCDnoteArea[0] = incomingNotes;
+			if (timing == 3){
+				if (l & 0x01){LCDnoteArea[0] = newNote;}
+				if (m & 0x01){LCDnoteArea[0] |= newNote >> 3;}
+				if (r & 0x01){LCDnoteArea[0] |= newNote >> 6;}
+				l = l >> 1; m = m >> 1; r = r >> 1;
+			}
+			else{
+				LCDnoteArea[0] = incomingNotes;
+			}
+			timing = (timing == 3)? 0 : timing + 1;
+			
 			break;
 		default: break;
 	}
@@ -188,7 +234,7 @@ int fallingTick(int state){
 }
 
 //---------------------- Note Hit FSM----------------------
-enum notehitStates{notehit_wait, notehit_detect, notehit_hit, notehit_missed, notehit_error, notehit_hold};
+enum notehitStates{notehit_start, notehit_init, notehit_wait, notehit_detect, notehit_hit, notehit_missed, notehit_error, notehit_hold};
 unsigned char nhs_currentnote = 0;
 unsigned char nhs_prevnote = 0;
 int notehitTick(int state){
@@ -199,8 +245,17 @@ int notehitTick(int state){
 	if (!isPlaying){
 		return state;	// game isnt started, just return
 	}
+	if (endGame || resetGame){
+		return notehit_start;
+	}
 	// State transitions
 	switch(state){
+		case notehit_start:
+			state = notehit_init;
+			break;
+		case notehit_init:
+			state = notehit_wait;
+			break;
 		case notehit_wait:
 			state = (nhs_prevnote == nhs_currentnote)? notehit_wait : notehit_detect;
 			break;
@@ -211,8 +266,11 @@ int notehitTick(int state){
 					((nhs_currentnote & 0x18) && !(controllerData & SNES_B)) ||
 					((nhs_currentnote & 0x3) && !(controllerData & SNES_A))
 				){
+					
+					state = (c == 3)? notehit_missed: notehit_detect;
 					c += 1;
-					state = (c == 3)? notehit_missed: notehit_detect;}
+					}
+					
 				// Hit the note
 				else{ state = notehit_hit;}
 			}
@@ -250,11 +308,17 @@ int notehitTick(int state){
 			}
 			break;
 		default:
-			state = notehit_detect;
+			state = notehit_start;
 			break;
 	}
 	// State actions
 	switch(state){
+		case notehit_start:
+			break;
+		case notehit_init:
+			hitCount = 0;
+			missCount = 0;
+			break;
 		case notehit_wait:
 			break;
 		case notehit_detect: 
@@ -272,14 +336,6 @@ int notehitTick(int state){
 		default:
 		break;
 	}
-	if (i > 10){
-		
-		displayHighscore(missCount, 7, 4);
-		
-		displayHighscore(hitCount, 22,4);
-		i = 0;
-	}
-	i += 1;
 	return state;
 }
 
@@ -288,6 +344,7 @@ enum speStates {spe_start, spe_begin, spe_bhold, spe_init,spe_playing, spe_pause
 
 int speTick(int state){
 	static unsigned char endtimer = 0;	// tracks how long endgame message is held
+	static unsigned char timer = 0;	// tracks when note stuff is empty
 	// Transition Logic
 	switch (state){
 		case spe_start:
@@ -309,7 +366,22 @@ int speTick(int state){
 			state = (controllerData & SNES_Start)? spe_bhold : spe_playing;
 			break;
 		case spe_playing:
-			if (endGame){
+			if (l == 0 && m == 0 && r == 0){
+				if (timer == 10){
+					LCD_ClearScreen();
+					LCD_DisplayString(1, "GAME OVER");
+					state = spe_endgame;
+				}
+				else{
+					timer += 1;
+					state = (controllerData & SNES_Start)? spe_pausehold : spe_playing;	// checks if game is paused or not
+					if (state == spe_pausehold){	// Display message when transitioning to pause screen
+						LCD_ClearScreen();
+						LCD_DisplayString(1, "GAME PAUSED");
+					}
+				}
+			}
+			else if (endGame){
 				LCD_ClearScreen();
 				LCD_DisplayString(1, "You Lose :(");
 				state = spe_endgame;
@@ -337,7 +409,7 @@ int speTick(int state){
 			state = (controllerData & SNES_Start)? spe_playhold : spe_playing;	// checks if game is paused or not
 			break;
 		case spe_endgame:
-			state = (endtimer > 100)? spe_init : spe_endgame;	// restarts game
+			state = (endtimer > 20)? spe_init : spe_endgame;	// restarts game
 			break;
 		case spe_reset:
 			state = spe_start;
@@ -362,6 +434,8 @@ int speTick(int state){
 			endtimer = 0;	// reset timer
 			isPlaying = 0;	// Not playing yet
 			endGame = 0;	// Game isnt over
+			resetGame = 0;
+			timer = 0;
 			break;
 		case spe_begin:
 			break;
@@ -380,8 +454,10 @@ int speTick(int state){
 		case spe_endgame:
 			isPlaying = 0;	// Game has ended, not playing anymore
 			endtimer += 1;	// increment endgame timer
+			endGame = 1;
 			break;
 		case spe_reset:
+			resetGame = 1;
 			isPlaying = 0;
 			break;
 		case spe_resethold:
@@ -392,9 +468,13 @@ int speTick(int state){
 }
 
 // --------------------------	Highscore FSM	------------------------------
-enum highscoreStates{hs_start, hs_init, hs_getscore, hs_update};
+enum highscoreStates{hs_start, hs_init, hs_getscore, hs_update, hs_paused};
 	
 int hsTick(int state){
+	static unsigned long oldHighscore;
+	unsigned long cS;
+	unsigned long oldScore;
+	static unsigned char i = 0;
 	// State transitions
 	switch(state){
 		case hs_start:
@@ -404,20 +484,49 @@ int hsTick(int state){
 			state = hs_getscore;
 			break;
 		case hs_getscore:
+			state = (endGame || resetGame)? hs_update : hs_getscore;	// if the game is over, check to update the score
+			break;
+		case hs_paused:
+			state = isPlaying? hs_getscore : hs_paused;
+			if (state = hs_getscore){LCD_ClearScreen();}
 			break;
 		case hs_update:
+			state = hs_start;
 			break;
-		default: break;
+		default: state = hs_start; break;
 	}
 	// state actions
 	switch(state){
 		case hs_start:
 			break;
 		case hs_init:
+			i = 0;
+			cS = 0;
+			oldScore = 0;
+			currentScore = 0;
+			hitCount = 0;
 			break;
 		case hs_getscore:
+			if (isPlaying){
+				currentScore = hitCount * 25;
+				oldScore = cS;
+				cS = currentScore;
+				if (i == 0 || cS != oldScore){
+					i = 1;
+					LCD_DisplayString(1, "Score: ");
+					displayHighscore(currentScore, 8, 8);
+				}
+			}
+			break;
+		case hs_paused:
+			i = 0;
 			break;
 		case hs_update:
+			
+// 			oldHighscore ;
+// 			if (currentScore > oldHighscore){
+// 				eeprom_update_dword (( uint32_t *) 0 , currentScore ) ;
+// 			}
 			break;
 		default: break;
 	}
@@ -438,12 +547,14 @@ int main(void)
 	creatCustomChar(1,customChar_musicNote);	// Creates the custom music note
 	
 	
+	
 	// Period for the tasks
 	unsigned long int SMTick1_calc = 20;		// LED matrix needs at least 20 ms period as to not have noticable flickering
-	unsigned long int SMTick2_calc = 50;		// ms for snes controller
-	unsigned long int SMTick3_calc = 200;		// Falling notes
+	unsigned long int SMTick2_calc = 75;		// ms for snes controller
+	unsigned long int SMTick3_calc = 100;		// Falling notes
 	unsigned long int SMTick4_calc = SMTick2_calc;		// Hit detection
-	unsigned long int SMTick5_calc = SMTick2_calc;		// main pause/play screen
+	unsigned long int SMTick5_calc = 250;		// main pause/play screen
+	unsigned long int SMTick6_calc = 1000;		// Highscore stuff
 	
 	//Calculating GCD
 	unsigned long int tmpGCD = 1;
@@ -451,6 +562,7 @@ int main(void)
 	tmpGCD = findGCD(tmpGCD, SMTick3_calc);
 	tmpGCD = findGCD(tmpGCD, SMTick4_calc);
 	tmpGCD = findGCD(tmpGCD, SMTick5_calc);
+	tmpGCD = findGCD(tmpGCD, SMTick6_calc);
 	
 	
 	//Greatest common divisor for all tasks or smallest time unit for tasks.
@@ -462,10 +574,11 @@ int main(void)
 	unsigned long int SMTick3_period = SMTick3_calc/GCD;
 	unsigned long int SMTick4_period = SMTick4_calc/GCD;
 	unsigned long int SMTick5_period = SMTick5_calc/GCD;
+	unsigned long int SMTick6_period = SMTick6_calc/GCD;
 
 	//Declare an array of tasks
-	static task task1, task2, task3, task4,task5;
-	task *tasks[] = { &task5, &task3, &task1, &task2, &task4};
+	static task task1, task2, task3, task4,task5, task6;
+	task *tasks[] = { &task5, &task3, &task1, &task2, &task4, &task6};
 	const unsigned short numTasks = sizeof(tasks)/sizeof(task*);
 
 	// Task 1	(LED matrix)
@@ -497,6 +610,12 @@ int main(void)
 	task5.period = SMTick5_period;//Task Period.
 	task5.elapsedTime = SMTick5_period;//Task current elapsed time.
 	task5.TickFct = &speTick;//Function pointer for the tick.
+	
+	// Task 5 (Highscore)
+	task6.state = -1;//Task initial state.
+	task6.period = SMTick6_period;//Task Period.
+	task6.elapsedTime = SMTick6_period;//Task current elapsed time.
+	task6.TickFct = &hsTick;//Function pointer for the tick.
 	
 	// Set the timer and turn it on
 	TimerSet(GCD);
