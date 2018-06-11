@@ -77,19 +77,29 @@ unsigned char LCDnoteArea[] = {0,0,0,0,0,0,0,0};	// Each represents a row
 unsigned char pausePic[] = {0x3c,0x42,0xa5,0x81,0xbd,0x81,0x42,0xff};	// Each represents a row
 unsigned char happyFace[] = {0x3c,0x42,0xa5,0x81,0xa5,0x99,0x42,0xff};	// Each represents a row
 unsigned char sadFace[] = {0x3c,0x42,0xa5,0x81,0x99,0xa5,0x42,0xff};	// Each represents a row
-unsigned short controllerData = 0;	
+	
+unsigned short controllerData = 0;	// Controller
 
 unsigned char incomingNotes = 0;	// replaces the top row of the note area
-unsigned char newNote = 0xc0;
+unsigned char newNote = 0xc0;		// Picture for what a note looks like, shift to add to note area
+
+
+
+// Game logic
+unsigned char isPlaying = 0;
+unsigned char endGame = 0;
+unsigned char resetGame = 0;
 
 unsigned short missCount = 0;
 unsigned short hitCount = 0;
 unsigned short chordCount = 0;
-unsigned char isPlaying = 0;
-unsigned char endGame = 0;
-unsigned char resetGame = 0;
+
+// Game scores
 unsigned char newHS = 0;
 unsigned long oldHighscore = 0;
+unsigned long currentScore = 0;
+
+// LCD Characters
 unsigned char customChar_musicNote[8] = {
 	0b00001,
 	0b00011,
@@ -101,20 +111,14 @@ unsigned char customChar_musicNote[8] = {
 	0b11000
 };
 
-unsigned long currentScore = 0;
 
+
+// note logic
 unsigned long long leftnote = 0x2bc5a794ebe9ab30  ;
 unsigned long long middlenote = 0xba483d605045ced9  ;
 unsigned long long rightnote = 0x64d70f3903d06909  ;
 
 
-// unsigned long leftnote = 0b10000111011000100000100100000011;
-// unsigned long middlenote = 0b10100010000010001001001001000100;
-// unsigned long rightnote = 0b10011000011100100100010000100000;
-
-// unsigned long leftnote = 0b1110000111;
-// unsigned long middlenote = 0b0000000111;
-// unsigned long rightnote = 0b1110000111;
 unsigned long long l, m, r;
 
 	
@@ -264,7 +268,7 @@ int fallingTick(int state){
 }
 
 //---------------------- Note Hit FSM----------------------
-enum notehitStates{notehit_start, notehit_init, notehit_wait, notehit_detect, notehit_hit, notehit_missed, notehit_error, notehit_hold};
+enum notehitStates{notehit_start, notehit_init, notehit_detect, notehit_hit, notehit_missed, notehit_hold};
 	
 unsigned char nhs_currentnote = 0;
 unsigned char nhs_prevnote = 0;
@@ -319,8 +323,6 @@ int notehitTick(int state){
 		case notehit_missed:
 			state = notehit_hold;
 			break;
-		case notehit_error:
-			break;
 		case notehit_hold:
 			if (nhs_prevnote == nhs_currentnote){	// we stayed on the same note
 				state = (controllerData & (SNES_A | SNES_B | SNES_Y))? notehit_hold : notehit_detect;	// transition to detect
@@ -342,8 +344,6 @@ int notehitTick(int state){
 			missCount = 0;
 			chordCount = 0;
 			break;
-		case notehit_wait:
-			break;
 		case notehit_detect: 
 			break;
 		case notehit_hit:
@@ -351,9 +351,6 @@ int notehitTick(int state){
 			
 			break;
 		case notehit_missed:
-			missCount+=1;
-			break;
-		case notehit_error:
 			missCount+=1;
 			break;
 		case notehit_hold: break;
@@ -545,8 +542,8 @@ int hsTick(int state){
 			currentScore = 0;
 			hitCount = 0;
 			newHS = 0;
-			//oldHighscore = eeprom_read_dword((uint32_t*)0);			// FIXMEFIXMEFIXEME
-			oldHighscore = 420;
+			oldHighscore = eeprom_read_dword((uint32_t*)0);			// Reads from eeprom
+			//oldHighscore = 420;
 			break;
 		case hs_getscore:
 			if (isPlaying){
@@ -554,8 +551,10 @@ int hsTick(int state){
 				oldScore = cS;
 				cS = currentScore;
 				if ((((controllerData && SNES_A) || (controllerData && SNES_B) ||(controllerData && SNES_Y) )) && (oldScore != currentScore)){
-					i = 1;
-					LCD_DisplayString(1, "Score: ");
+					if (i == 0){
+						LCD_DisplayString(1, "Score: ");
+						i = 1;
+					}
 					displayHighscore(currentScore, 8, 8);
 					newHS = (currentScore > oldHighscore)? 1 : 0;
 				}
@@ -570,7 +569,7 @@ int hsTick(int state){
 				LCD_ClearScreen();
 				LCD_DisplayString(1, "New HighScore!");
 				displayHighscore(currentScore, 24, 8);
-				// eeprom_update_dword (( uint32_t *) 0 , currentScore ) ;	// FIXMEFIXMEFIXME
+				eeprom_update_dword (( uint32_t *) 0 , currentScore ) ;	// Writes to EEPROM
 			}
 			else{
 				LCD_ClearScreen();
@@ -579,10 +578,6 @@ int hsTick(int state){
 				displayHighscore(oldHighscore, 24, 8);
 				newHS = 0;
 			}
-// 			oldHighscore ;
-// 			if (currentScore > oldHighscore){
-// 				eeprom_update_dword (( uint32_t *) 0 , currentScore ) ;
-// 			}
 			break;
 		case hs_holdupdate:
 			break;
@@ -602,7 +597,7 @@ int main(void)
 	DDRC = 0xff; PORTC = 0x00;	// PORTC is lcd
 	
 	LCD_init();
-	//eeprom_update_dword (( uint32_t *) 0 , 420 ) ;
+	//eeprom_update_dword (( uint32_t *) 0 , 420 ) ;		// Initializes highscore. Uncomment to reset the highscore
 	creatCustomChar(1,customChar_musicNote);	// Creates the custom music note
 	
 	
